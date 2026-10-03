@@ -1,0 +1,27 @@
+[project]
+name = "fx"
+version = "0.1.0"
+description = "海关计征汇率 MCP 服务：CFETS 人民币汇率中间价 + 海关总署令第 272 号规则"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp[cli]>=2.0",
+    "psycopg[binary]>=3.1",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+
+[project.scripts]
+fx = "fx.server:main"
+fx-fetch = "fx.fetch_rates:main"
+fx-api = "fx.api:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

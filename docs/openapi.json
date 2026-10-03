@@ -1,0 +1,866 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "海关计征汇率 API",
+    "description": "中国海关计征汇率（海关总署令第 272 号）与 CFETS 人民币汇率中间价查询。报关折算请用「计征汇率」分组的接口：计征汇率是「上一个月第三个星期三」的中间价，不是查询当天的市场汇率，也不是中国银行挂牌价。",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "元数据与健康"
+        ],
+        "summary": "健康检査：连库状态与数据滞后",
+        "description": "健康检查：连得上库、且抓取链路还在跑，才算 ok。\n\n中间价滞后**不直接判故障**：周末与法定节假日休市本来就不公布新价。\n所以中间价只给 warning（HTTP 200）；真正判故障看市场参考汇率——\n那是境外源、每日更新、节假日照常，它滞后说明 fx-fetch 没在跑（HTTP 503）。",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/customs-rate": {
+      "get": {
+        "tags": [
+          "计征汇率"
+        ],
+        "summary": "申报日适用的海关计征汇率",
+        "description": "某次申报适用的海关计征汇率（含日期推导与依据）。\n\n按「上一个月第三个星期三」取值，非交易日的顺延下一个交易日。",
+        "operationId": "customs_rate_api_customs_rate_get",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "外币币种，代码或中文名，如 USD / 美元",
+              "title": "Currency"
+            },
+            "description": "外币币种，代码或中文名，如 USD / 美元"
+          },
+          {
+            "name": "declaration_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "完成申报之日，YYYY-MM-DD",
+              "title": "Declaration Date"
+            },
+            "description": "完成申报之日，YYYY-MM-DD"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Customs Rate Api Customs Rate Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/convert": {
+      "get": {
+        "tags": [
+          "计征汇率"
+        ],
+        "summary": "按计征汇率折人民币（四舍五入至分）",
+        "description": "按计征汇率把外币金额折合人民币，四舍五入至分。",
+        "operationId": "convert_api_convert_get",
+        "parameters": [
+          {
+            "name": "amount",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "外币金额，字符串形式以避免浮点误差",
+              "title": "Amount"
+            },
+            "description": "外币金额，字符串形式以避免浮点误差"
+          },
+          {
+            "name": "currency",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "外币币种，代码或中文名",
+              "title": "Currency"
+            },
+            "description": "外币币种，代码或中文名"
+          },
+          {
+            "name": "declaration_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "完成申报之日，YYYY-MM-DD",
+              "title": "Declaration Date"
+            },
+            "description": "完成申报之日，YYYY-MM-DD"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Convert Api Convert Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rate": {
+      "get": {
+        "tags": [
+          "中间价"
+        ],
+        "summary": "指定交易日的人民币汇率中间价",
+        "description": "指定交易日的人民币汇率中间价（非报关场景）。\n\n该日没有中间价时不猜值，返回 available=false 与前后最近的可查日期。",
+        "operationId": "fx_rate_api_rate_get",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "外币币种，代码或中文名",
+              "title": "Currency"
+            },
+            "description": "外币币种，代码或中文名"
+          },
+          {
+            "name": "trade_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "交易日期，YYYY-MM-DD",
+              "title": "Trade Date"
+            },
+            "description": "交易日期，YYYY-MM-DD"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Fx Rate Api Rate Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/latest": {
+      "get": {
+        "tags": [
+          "中间价"
+        ],
+        "summary": "最近一个交易日公布的中间价（当前价）",
+        "description": "最近一个交易日公布的中间价（「当前价」）。\n\n中间价每个交易日约 09:15 公布一次，休市日不更新——所以返回里带 rate_date\n与 stale_days（距今天数）。这是中间价而非实时行情，也不能用于报关折算。",
+        "operationId": "latest_api_latest_get",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "外币币种，代码或中文名；留空返回全部币种",
+              "title": "Currency"
+            },
+            "description": "外币币种，代码或中文名；留空返回全部币种"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Latest Api Latest Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/market-rate": {
+      "get": {
+        "tags": [
+          "市场参考汇率"
+        ],
+        "summary": "市场参考汇率（非计征汇率，不可报关）",
+        "description": "市场参考汇率（**非计征汇率，不可用于报关折算**）。\n\n境外源，每日 UTC 00:00 更新，周末与节假日照常更新，覆盖约 160 个币种——\n包括 CFETS 不公布的冷门币种。与 /api/latest（CFETS 中间价）是两个口径，\n返回里的 cfets_reference 给出同币种中间价与偏离，便于交叉核对。",
+        "operationId": "market_rate_api_market_rate_get",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "外币币种代码（如 VND）或中文名；留空返回全部",
+              "title": "Currency"
+            },
+            "description": "外币币种代码（如 VND）或中文名；留空返回全部"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Market Rate Api Market Rate Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/history": {
+      "get": {
+        "tags": [
+          "中间价"
+        ],
+        "summary": "中间价历史序列",
+        "description": "区间内的中间价历史序列（按日期倒序），附区间统计。",
+        "operationId": "history_api_history_get",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "外币币种，代码或中文名",
+              "title": "Currency"
+            },
+            "description": "外币币种，代码或中文名"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "起始日期，YYYY-MM-DD",
+              "title": "Start Date"
+            },
+            "description": "起始日期，YYYY-MM-DD"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "结束日期，YYYY-MM-DD",
+              "title": "End Date"
+            },
+            "description": "结束日期，YYYY-MM-DD"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "最多返回条数，1-500，按日期倒序",
+              "default": 60,
+              "title": "Limit"
+            },
+            "description": "最多返回条数，1-500，按日期倒序"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response History Api History Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/currencies": {
+      "get": {
+        "tags": [
+          "元数据与健康"
+        ],
+        "summary": "可用币种与数据覆盖区间",
+        "description": "可用币种与数据覆盖区间。",
+        "operationId": "currencies_api_currencies_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Currencies Api Currencies Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dataset-info": {
+      "get": {
+        "tags": [
+          "元数据与健康"
+        ],
+        "summary": "数据集说明：来源、覆盖区间、规则与边界",
+        "description": "数据集说明：来源、覆盖区间、适用规则与口径提醒。",
+        "operationId": "dataset_info_api_dataset_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Dataset Info Api Dataset Info Get"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "入参问题：币种无法识别或有歧义、日期格式不对、金额非法",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "invalid_input",
+                    "message": "无法识别币种「火星币」……"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "数据缺失：该日期或币种没有中间价，库中尚未抓到",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "data_unavailable",
+                    "message": "库中没有 2029-12-19 及之后……"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库不可用，或抓取链路已停（见 /api/health）",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "db_unavailable",
+                    "message": "could not connect……"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "计征汇率",
+      "description": "报关折算专用。依据海关总署令第 272 号：上一个月第三个星期三 CFETS 中间价。"
+    },
+    {
+      "name": "中间价",
+      "description": "CFETS 人民币汇率中间价查询。非报关场景；报关请用「计征汇率」分组。"
+    },
+    {
+      "name": "市场参考汇率",
+      "description": "市场汇率，**非计征汇率**，不可用于报关折算。休市期与冷门币种的参考价。"
+    },
+    {
+      "name": "元数据与健康",
+      "description": "币种清单、数据集说明、健康检査。"
+    }
+  ]
+}

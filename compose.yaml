@@ -1,0 +1,94 @@
+name: fx
+
+x-app: &app
+  image: fx-mcp:local
+  build:
+    context: .
+    args:
+      PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://pypi.org/simple}
+  environment:
+    FX_DSN: "host=db port=5432"
+    PGDATABASE: ${POSTGRES_DB:-fx}
+    PGUSER: ${POSTGRES_USER:-fx}
+    PGPASSWORD: ${POSTGRES_PASSWORD:-fx-dev-password}
+    TZ: ${TZ:-Asia/Shanghai}
+    # 市场参考汇率（境外源，可选）。留空则只抓 CFETS 中间价。
+    FX_EXCHANGERATE_API_KEY: ${FX_EXCHANGERATE_API_KEY:-}
+    # /api/health 的数据滞后阈值（天）。中间价超阈值只告警，
+    # 市场参考汇率超阈值判故障（503，容器健康检査失败）。
+    FX_STALE_WARN_DAYS: ${FX_STALE_WARN_DAYS:-7}
+    FX_MARKET_STALE_DAYS: ${FX_MARKET_STALE_DAYS:-2}
+    # 按月分页后请求数很少；调大只是更保守，不影响正确性。
+    FX_FETCH_DELAY: ${FX_FETCH_DELAY:-1.5}
+    FX_FETCH_AT: ${FX_FETCH_AT:-09:40}
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fx}
+      POSTGRES_USER: ${POSTGRES_USER:-fx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fx-dev-password}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./data/001_schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # 每日定时抓取中间价。首轮若发现表为空，会自动从 FX_BACKFILL_START 全量回填。
+  fetcher:
+    <<: *app
+    command: ["fx-fetch", "--watch", "--at", "${FX_FETCH_AT:-09:40}"]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  app:
+    <<: *app
+    ports:
+      - "${FX_BIND_HOST:-127.0.0.1}:${FX_PORT:-8766}:8765"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # REST API：与 MCP 工具同源（共用 service.py），面向脚本与内部系统集成。
+  api:
+    <<: *app
+    command: ["fx-api", "--host", "0.0.0.0", "--port", "8767"]
+    ports:
+      - "${FX_API_BIND_HOST:-127.0.0.1}:${FX_API_PORT:-8767}:8767"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8767/api/health')\""]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+  # 手动回填历史区间：docker compose run --rm backfill
+  # 实测 3 年（44 个月）约 1 分钟；如需更慢可追加 fx-fetch --delay 30
+  backfill:
+    <<: *app
+    profiles: ["tools"]
+    command: ["fx-fetch", "--start", "${FX_BACKFILL_START:-2023-01-01}", "--delay", "${FX_FETCH_DELAY:-1.5}"]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+
+volumes:
+  pgdata:
