@@ -60,6 +60,7 @@ services:
     <<: *app
     ports:
       - "${FX_BIND_HOST:-127.0.0.1}:${FX_PORT:-8766}:8765"
+      - "172.17.0.1:${FX_PORT:-8766}:8765"
     depends_on:
       db:
         condition: service_healthy

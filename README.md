@@ -52,6 +52,48 @@ docker compose logs -f fetcher     # 首次会自动全量回填
 
 默认 MCP 地址：`http://127.0.0.1:8766/mcp/fx`，Streamable HTTP，无状态模式。
 
+### 内网网关接入
+
+网关容器可通过宿主机内网 IP 和映射端口访问 fx，无需加入 fx 的 Docker 网络。
+Compose 的 MCP 端口映射为：
+
+```yaml
+ports:
+  - "${FX_BIND_HOST:-127.0.0.1}:${FX_PORT:-8766}:8765"
+  - "172.17.0.1:${FX_PORT:-8766}:8765"
+```
+
+如果网关与 fx 在同一台 Linux 宿主机的不同容器中，且宿主机 Docker 网桥地址为
+`172.17.0.1`，网关可使用 `http://172.17.0.1:8766/mcp/fx`，协议选
+**Streamable HTTP**，目标地址白名单添加 `172.17.0.1`。
+`172.17.0.1` 必须是宿主机实际拥有的地址；Docker Desktop 或不同网桥地址的环境
+需先调整这条映射。
+
+第一条映射默认绑定 `127.0.0.1`，网关无法通过宿主机内网 IP 访问它。
+参见 [Docker 端口发布说明](https://docs.docker.com/engine/network/port-publishing/#publishing-ports)。
+
+在运行 fx 的服务器上，修改 `.env`（将示例 IP 替换为服务器实际内网 IP）：
+
+```dotenv
+FX_BIND_HOST=192.168.1.100
+FX_PORT=8766
+```
+
+重新创建应用容器，使端口绑定生效：
+
+```sh
+docker compose up -d --no-deps --force-recreate app
+docker compose port app 8765
+```
+
+网关后台的 MCP 地址填写 `http://192.168.1.100:8766/mcp/fx`。
+如果网关有目标地址白名单，将该内网 IP 加入白名单。
+网关需要能路由到这个地址，服务器防火墙需允许网关访问 TCP 8766。
+此配置将第一条 MCP 端口映射绑定到指定内网地址，同时保留 `172.17.0.1` 映射，
+无需为它配置公网端口映射。
+
+### 手动回填
+
 ```sh
 # 手动回填历史区间
 docker compose run --rm backfill
